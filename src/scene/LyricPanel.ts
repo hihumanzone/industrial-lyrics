@@ -4,22 +4,8 @@ import { NeonWord } from './NeonWord';
 import { MechanicalArmature } from './MechanicalArmature';
 import { TextureGenerator, PBRTextures } from './TextureGenerator';
 import { calculateSubLines, MAX_PANEL_WIDTH, PANEL_PADDING } from './SubLineCalculator';
-
-export interface SparkParticle {
-  pos: THREE.Vector3;
-  vel: THREE.Vector3;
-  age: number;
-  maxAge: number;
-  active: boolean;
-}
-
-export interface BubbleParticle {
-  pos: THREE.Vector3;
-  vel: THREE.Vector3;
-  age: number;
-  maxAge: number;
-  active: boolean;
-}
+import { SparkSystem } from './SparkSystem';
+import { BubbleSystem } from './BubbleSystem';
 
 export class LyricPanel {
   public group: THREE.Group;
@@ -42,17 +28,8 @@ export class LyricPanel {
   // LED State
   private leds: { mesh: THREE.Mesh; baseColor: THREE.Color; mode: 'blink' | 'pulse'; phaseOffset: number }[] = [];
 
-  // Spark Particle State
-  private sparkGeometry!: THREE.BufferGeometry;
-  private sparkMesh!: THREE.Points;
-  private sparkPool: SparkParticle[] = [];
-  private maxSparks = 60;
-
-  // Bubble Particle State
-  private bubbleGeometry!: THREE.BufferGeometry;
-  private bubbleMesh!: THREE.Points;
-  private bubblePool: BubbleParticle[] = [];
-  private maxBubbles = 50;
+  private sparkSystem!: SparkSystem;
+  private bubbleSystem?: BubbleSystem;
 
   // Layout positions
   public currentPosition = new THREE.Vector3(0, 0, -10);
@@ -143,25 +120,9 @@ export class LyricPanel {
     this.index = index;
     this.group = new THREE.Group();
 
-    // Initialize particle pools
-    for (let i = 0; i < this.maxSparks; i++) {
-      this.sparkPool.push({
-        pos: new THREE.Vector3(),
-        vel: new THREE.Vector3(),
-        age: 0,
-        maxAge: 0,
-        active: false
-      });
-    }
-    for (let i = 0; i < this.maxBubbles; i++) {
-      this.bubblePool.push({
-        pos: new THREE.Vector3(),
-        vel: new THREE.Vector3(),
-        age: 0,
-        maxAge: 0,
-        active: false
-      });
-    }
+    // Initialize Spark System
+    this.sparkSystem = new SparkSystem(60);
+    this.group.add(this.sparkSystem.mesh);
 
     // 1. Retrieve procedural PBR textures from the generator
     const textures = TextureGenerator.getPBRTextures();
@@ -299,67 +260,27 @@ export class LyricPanel {
     this.ledsGroup = new THREE.Group();
     this.group.add(this.ledsGroup);
 
-    const warningLEDMat = new THREE.MeshStandardMaterial({
-      color: 0xdd2200,
-      emissive: 0xdd2200,
-      emissiveIntensity: 1.0
-    });
-
-    const leftLED = new THREE.Mesh(LyricPanel.ledSphereGeometryPause, warningLEDMat);
-    leftLED.position.set(leftBracket.position.x - 0.42, 0, bracketDepth / 2 + 0.015);
-    this.ledsGroup.add(leftLED);
-    this.leds.push({
-      mesh: leftLED,
-      baseColor: new THREE.Color(0xff3300),
-      mode: 'pulse',
-      phaseOffset: 0
-    });
-
-    const rightLED = new THREE.Mesh(LyricPanel.ledSphereGeometryPause, warningLEDMat);
-    rightLED.position.set(rightBracket.position.x + 0.22, 0, bracketDepth / 2 + 0.015);
-    this.ledsGroup.add(rightLED);
-    this.leds.push({
-      mesh: rightLED,
-      baseColor: new THREE.Color(0xff3300),
-      mode: 'pulse',
-      phaseOffset: Math.PI
-    });
-
-    // 7. Initialize Sparks System elements
-    this.sparkGeometry = new THREE.BufferGeometry();
-    const sparkPositions = new Float32Array(this.maxSparks * 3);
-    for (let i = 0; i < this.maxSparks; i++) {
-      sparkPositions[i * 3 + 2] = -999;
-    }
-    this.sparkGeometry.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
-    const sparkMaterial = new THREE.PointsMaterial({
-      color: 0xff8833,
-      size: 0.05,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      opacity: 0.95
-    });
-    this.sparkMesh = new THREE.Points(this.sparkGeometry, sparkMaterial);
-    this.sparkMesh.frustumCulled = false;
-    this.group.add(this.sparkMesh);
+    const ledZ = bracketDepth / 2 + 0.015;
+    this.createLED(
+      new THREE.Vector3(leftBracket.position.x - 0.42, 0, ledZ),
+      0xdd2200,
+      new THREE.Color(0xff3300),
+      'pulse',
+      0,
+      LyricPanel.ledSphereGeometryPause
+    );
+    this.createLED(
+      new THREE.Vector3(rightBracket.position.x + 0.22, 0, ledZ),
+      0xdd2200,
+      new THREE.Color(0xff3300),
+      'pulse',
+      Math.PI,
+      LyricPanel.ledSphereGeometryPause
+    );
 
     // 8. Initialize Bubbles System elements
-    this.bubbleGeometry = new THREE.BufferGeometry();
-    const bubblePositions = new Float32Array(this.maxBubbles * 3);
-    for (let i = 0; i < this.maxBubbles; i++) {
-      bubblePositions[i * 3 + 2] = -999;
-    }
-    this.bubbleGeometry.setAttribute('position', new THREE.BufferAttribute(bubblePositions, 3));
-    const bubbleMaterial = new THREE.PointsMaterial({
-      color: 0xffeedd,
-      size: 0.045,     // reduced size from 0.08 to 0.045 for a subtle effect
-      transparent: true,
-      opacity: 0.65,    // reduced opacity from 0.95 to 0.65
-      blending: THREE.AdditiveBlending
-    });
-    this.bubbleMesh = new THREE.Points(this.bubbleGeometry, bubbleMaterial);
-    this.bubbleMesh.frustumCulled = false;
-    this.group.add(this.bubbleMesh);
+    this.bubbleSystem = new BubbleSystem(50);
+    this.group.add(this.bubbleSystem.mesh);
   }
 
   /**
@@ -681,54 +602,39 @@ export class LyricPanel {
     this.ledsGroup = new THREE.Group();
     this.group.add(this.ledsGroup);
 
-    // Top-Left LED (Green, pulses)
-    const led1Mat = new THREE.MeshStandardMaterial({ color: 0x11aa11, emissive: 0x11aa11, emissiveIntensity: 1.0 });
-    const led1 = new THREE.Mesh(LyricPanel.ledSphereGeometryNormal, led1Mat);
-    led1.position.set(-boltOffsetX + 0.24, boltOffsetY, boltOffsetZ);
-    this.ledsGroup.add(led1);
-    this.leds.push({ mesh: led1, baseColor: new THREE.Color(0x00ff00), mode: 'pulse', phaseOffset: 0 });
+    this.createLED(
+      new THREE.Vector3(-boltOffsetX + 0.24, boltOffsetY, boltOffsetZ),
+      0x11aa11,
+      new THREE.Color(0x00ff00),
+      'pulse',
+      0,
+      LyricPanel.ledSphereGeometryNormal
+    );
+    this.createLED(
+      new THREE.Vector3(boltOffsetX - 0.24, boltOffsetY, boltOffsetZ),
+      0xaa1111,
+      new THREE.Color(0xff0000),
+      'blink',
+      Math.PI,
+      LyricPanel.ledSphereGeometryNormal
+    );
+    this.createLED(
+      new THREE.Vector3(-boltOffsetX + 0.24, -boltOffsetY, boltOffsetZ),
+      0xaa1111,
+      new THREE.Color(0xff0000),
+      'blink',
+      0,
+      LyricPanel.ledSphereGeometryNormal
+    );
+    this.createLED(
+      new THREE.Vector3(boltOffsetX - 0.24, -boltOffsetY, boltOffsetZ),
+      0xaa6600,
+      new THREE.Color(0xffaa00),
+      'pulse',
+      Math.PI / 2,
+      LyricPanel.ledSphereGeometryNormal
+    );
 
-    // Top-Right LED (Red, blinks)
-    const led2Mat = new THREE.MeshStandardMaterial({ color: 0xaa1111, emissive: 0xaa1111, emissiveIntensity: 1.0 });
-    const led2 = new THREE.Mesh(LyricPanel.ledSphereGeometryNormal, led2Mat);
-    led2.position.set(boltOffsetX - 0.24, boltOffsetY, boltOffsetZ);
-    this.ledsGroup.add(led2);
-    this.leds.push({ mesh: led2, baseColor: new THREE.Color(0xff0000), mode: 'blink', phaseOffset: Math.PI });
-
-    // Bottom-Left LED (Red, blinks)
-    const led3Mat = new THREE.MeshStandardMaterial({ color: 0xaa1111, emissive: 0xaa1111, emissiveIntensity: 1.0 });
-    const led3 = new THREE.Mesh(LyricPanel.ledSphereGeometryNormal, led3Mat);
-    led3.position.set(-boltOffsetX + 0.24, -boltOffsetY, boltOffsetZ);
-    this.ledsGroup.add(led3);
-    this.leds.push({ mesh: led3, baseColor: new THREE.Color(0xff0000), mode: 'blink', phaseOffset: 0 });
-
-    // Bottom-Right LED (Amber, pulses)
-    const led4Mat = new THREE.MeshStandardMaterial({ color: 0xaa6600, emissive: 0xaa6600, emissiveIntensity: 1.0 });
-    const led4 = new THREE.Mesh(LyricPanel.ledSphereGeometryNormal, led4Mat);
-    led4.position.set(boltOffsetX - 0.24, -boltOffsetY, boltOffsetZ);
-    this.ledsGroup.add(led4);
-    this.leds.push({ mesh: led4, baseColor: new THREE.Color(0xffaa00), mode: 'pulse', phaseOffset: Math.PI / 2 });
-
-    // 7. Local Spark Particle System Setup
-    this.sparkGeometry = new THREE.BufferGeometry();
-    const sparkPositions = new Float32Array(this.maxSparks * 3);
-    // Initialize all sparks offscreen
-    for (let i = 0; i < this.maxSparks; i++) {
-      sparkPositions[i * 3 + 2] = -999;
-    }
-    this.sparkGeometry.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
-    
-    const sparkMaterial = new THREE.PointsMaterial({
-      color: 0xff8833,
-      size: 0.05,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      opacity: 0.95
-    });
-
-    this.sparkMesh = new THREE.Points(this.sparkGeometry, sparkMaterial);
-    this.sparkMesh.frustumCulled = false; // Prevent dynamic particles from being culled due to cached bounding sphere
-    this.group.add(this.sparkMesh);
   }
 
   /**
@@ -738,34 +644,7 @@ export class LyricPanel {
   public emitSparks(position: THREE.Vector3, count: number): void {
     const localPos = LyricPanel.scratchLocalPos.copy(position);
     this.group.worldToLocal(localPos);
-
-    for (let c = 0; c < count; c++) {
-      // Find inactive spark
-      let spark = this.sparkPool.find(s => !s.active);
-      if (!spark) {
-        // Overwrite the oldest active spark
-        let oldestIndex = 0;
-        let maxAgeDiff = -1;
-        for (let i = 0; i < this.maxSparks; i++) {
-          const ageDiff = this.sparkPool[i].age;
-          if (ageDiff > maxAgeDiff) {
-            maxAgeDiff = ageDiff;
-            oldestIndex = i;
-          }
-        }
-        spark = this.sparkPool[oldestIndex];
-      }
-
-      spark.pos.copy(localPos);
-      spark.vel.set(
-        (Math.random() - 0.5) * 0.08,
-        Math.random() * 0.15,
-        (Math.random() - 0.5) * 0.08 + 0.08
-      );
-      spark.age = 0;
-      spark.maxAge = 25 + Math.floor(Math.random() * 25);
-      spark.active = true;
-    }
+    this.sparkSystem.emit(localPos, count);
   }
 
   /**
@@ -892,10 +771,12 @@ export class LyricPanel {
     }
 
     // 3. Animate local sparks
-    this.updateSparks();
+    this.sparkSystem.update();
 
     // 3.5. Animate liquid bubbles
-    this.updateBubbles(time, inActiveRange);
+    if (this.bubbleSystem) {
+      this.bubbleSystem.update(time, inActiveRange, this.currentProgress, this.width);
+    }
 
     // 4. Animate corner LEDs
     this.leds.forEach(led => {
@@ -914,129 +795,7 @@ export class LyricPanel {
     this.armature.update(this.currentPosition);
   }
 
-  private updateSparks(): void {
-    const positions = this.sparkGeometry.attributes.position.array as Float32Array;
 
-    // Reset positions
-    for (let i = 0; i < this.maxSparks; i++) {
-      positions[i * 3 + 2] = -999;
-    }
-
-    // Animate active sparks
-    for (let i = 0; i < this.maxSparks; i++) {
-      const s = this.sparkPool[i];
-      if (!s.active) continue;
-
-      s.pos.add(s.vel);
-      s.vel.y -= 0.006; // gravity
-      s.vel.x *= 0.98;  // drag
-      s.vel.z *= 0.98;
-      s.age++;
-
-      if (s.age < s.maxAge) {
-        positions[i * 3] = s.pos.x;
-        positions[i * 3 + 1] = s.pos.y;
-        positions[i * 3 + 2] = s.pos.z;
-      } else {
-        s.active = false;
-      }
-    }
-
-    this.sparkGeometry.attributes.position.needsUpdate = true;
-  }
-
-  private updateBubbles(time: number, inActiveRange: boolean): void {
-    if (!this.bubbleGeometry) return;
-
-    const positions = this.bubbleGeometry.attributes.position.array as Float32Array;
-
-    // Reset positions
-    for (let i = 0; i < this.maxBubbles; i++) {
-      positions[i * 3 + 2] = -999;
-    }
-
-    const bracketWidth = 0.4;
-    const L = this.width - bracketWidth * 2;
-    const currentLength = this.currentProgress * L;
-
-    // Count active bubbles
-    let activeBubblesCount = 0;
-    for (let i = 0; i < this.maxBubbles; i++) {
-      if (this.bubblePool[i].active) activeBubblesCount++;
-    }
-
-    const maxActiveBubbles = Math.round(this.currentProgress * this.maxBubbles);
-    if (inActiveRange && this.currentProgress > 0 && this.currentProgress < 1 && Math.random() < 0.75) {
-      if (activeBubblesCount < maxActiveBubbles) {
-        let bubble = this.bubblePool.find(b => !b.active);
-        if (!bubble) {
-          let oldestIndex = 0;
-          let maxAgeDiff = -1;
-          for (let i = 0; i < this.maxBubbles; i++) {
-            const ageDiff = this.bubblePool[i].age;
-            if (ageDiff > maxAgeDiff) {
-              maxAgeDiff = ageDiff;
-              oldestIndex = i;
-            }
-          }
-          bubble = this.bubblePool[oldestIndex];
-        }
-
-        const spawnX = -L / 2 + Math.random() * currentLength;
-        const angle = -Math.PI / 3.5 + Math.random() * (Math.PI * 2 / 3.5);
-        const radius = 0.061 + Math.random() * 0.021;
-        const spawnY = Math.sin(angle) * radius;
-        const spawnZ = Math.cos(angle) * radius;
-
-        bubble.pos.set(spawnX, spawnY, spawnZ);
-        bubble.vel.set(
-          (Math.random() - 0.5) * 0.003, // subtle wobble X
-          0.003 + Math.random() * 0.004,  // gentle rise Y
-          -Math.random() * 0.001          // drift slightly back towards core
-        );
-        bubble.age = 0;
-        bubble.maxAge = 40 + Math.floor(Math.random() * 30);
-        bubble.active = true;
-      }
-    }
-
-    // Animate active bubbles
-    for (let i = 0; i < this.maxBubbles; i++) {
-      const b = this.bubblePool[i];
-      if (!b.active) continue;
-
-      b.pos.add(b.vel);
-      b.pos.x += Math.sin(time * 8 + i) * 0.001;
-      b.pos.z += Math.cos(time * 8 + i) * 0.001;
-      b.age++;
-
-      const distFromCenter = Math.sqrt(b.pos.y * b.pos.y + b.pos.z * b.pos.z);
-      const isOut = distFromCenter > 0.088 || b.pos.x < -L / 2 || b.pos.x > -L / 2 + currentLength;
-
-      if (b.age < b.maxAge && !isOut) {
-        positions[i * 3] = b.pos.x;
-        positions[i * 3 + 1] = b.pos.y;
-        positions[i * 3 + 2] = b.pos.z;
-      } else {
-        b.active = false;
-      }
-    }
-
-    // Prune excess if liquid level dropped
-    let currentActiveCount = 0;
-    for (let i = 0; i < this.maxBubbles; i++) {
-      const b = this.bubblePool[i];
-      if (b.active) {
-        currentActiveCount++;
-        if (currentActiveCount > maxActiveBubbles) {
-          b.active = false;
-          positions[i * 3 + 2] = -999;
-        }
-      }
-    }
-
-    this.bubbleGeometry.attributes.position.needsUpdate = true;
-  }
 
   public getWordGlowSources(target: { color: THREE.Color; intensity: number; position: THREE.Vector3; width: number; isTrailing: boolean; isPause?: boolean; progress?: number }[]): void {
     if (this.data.isPause) {
@@ -1080,7 +839,7 @@ export class LyricPanel {
     // Toggle secondary meshes to save frames in low performance mode
     if (this.wiresGroup) this.wiresGroup.visible = !enabled;
     if (this.ledsGroup) this.ledsGroup.visible = !enabled;
-    if (this.sparkMesh) this.sparkMesh.visible = !enabled;
+    this.sparkSystem.setVisible(!enabled);
   }
 
   public dispose(): void {
@@ -1137,25 +896,37 @@ export class LyricPanel {
       }
     });
 
-    // Dispose sparks
-    if (this.sparkGeometry) this.sparkGeometry.dispose();
-    if (this.sparkMesh) {
-      if (Array.isArray(this.sparkMesh.material)) {
-        this.sparkMesh.material.forEach(m => m.dispose());
-      } else {
-        this.sparkMesh.material.dispose();
-      }
+    // Dispose particle systems
+    if (this.sparkSystem) {
+      this.sparkSystem.dispose();
     }
+    if (this.bubbleSystem) {
+      this.bubbleSystem.dispose();
+    }
+  }
 
-    // Dispose bubbles
-    if (this.bubbleGeometry) this.bubbleGeometry.dispose();
-    if (this.bubbleMesh) {
-      if (Array.isArray(this.bubbleMesh.material)) {
-        this.bubbleMesh.material.forEach(m => m.dispose());
-      } else {
-        this.bubbleMesh.material.dispose();
-      }
-    }
+  private createLED(
+    position: THREE.Vector3,
+    colorHex: number,
+    baseColor: THREE.Color,
+    mode: 'blink' | 'pulse',
+    phaseOffset: number,
+    geometry: THREE.SphereGeometry
+  ): void {
+    const ledMat = new THREE.MeshStandardMaterial({
+      color: colorHex,
+      emissive: colorHex,
+      emissiveIntensity: 1.0
+    });
+    const led = new THREE.Mesh(geometry, ledMat);
+    led.position.copy(position);
+    this.ledsGroup.add(led);
+    this.leds.push({
+      mesh: led,
+      baseColor,
+      mode,
+      phaseOffset
+    });
   }
 
   public static disposeStaticCaches(): void {
