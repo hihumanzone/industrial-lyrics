@@ -19,13 +19,15 @@ export class ExportModal {
 
   // Recording state
   private isRecording = false;
-  private mediaRecorder: MediaRecorder | null = null;
-  private recordedChunks: Blob[] = [];
   private fps = 30;
   private exportWidth = 0;
   private exportHeight = 0;
 
-  // Web Audio Context state
+  // Legacy MediaRecorder state (fallback)
+  private mediaRecorder: MediaRecorder | null = null;
+  private recordedChunks: Blob[] = [];
+
+  // Web Audio Context state (shared between both export paths)
   private audioCtx: AudioContext | null = null;
   private audioSourceNode: MediaElementAudioSourceNode | null = null;
   private audioDestNode: MediaStreamAudioDestinationNode | null = null;
@@ -41,11 +43,21 @@ export class ExportModal {
   private onResolutionUnlock?: () => void;
   private getTrackName: () => string;
 
+  // New callbacks for offline rendering
+  private renderFrameAtTime: (time: number) => void;
+  private stopRenderLoop: () => void;
+  private resumeRenderLoop: () => void;
+  private getAudioFile: () => File | null;
+
   constructor(options: {
     canvas: HTMLCanvasElement;
     audio: HTMLAudioElement;
     statusPanel: StatusPanel;
     getTrackName: () => string;
+    renderFrameAtTime: (time: number) => void;
+    stopRenderLoop: () => void;
+    resumeRenderLoop: () => void;
+    getAudioFile: () => File | null;
     onRecordingStart?: () => void;
     onRecordingEnd?: () => void;
     onResolutionLock?: (width: number, height: number) => void;
@@ -55,6 +67,10 @@ export class ExportModal {
     this.audio = options.audio;
     this.statusPanel = options.statusPanel;
     this.getTrackName = options.getTrackName;
+    this.renderFrameAtTime = options.renderFrameAtTime;
+    this.stopRenderLoop = options.stopRenderLoop;
+    this.resumeRenderLoop = options.resumeRenderLoop;
+    this.getAudioFile = options.getAudioFile;
     this.onRecordingStart = options.onRecordingStart;
     this.onRecordingEnd = options.onRecordingEnd;
     this.onResolutionLock = options.onResolutionLock;
@@ -120,7 +136,7 @@ export class ExportModal {
         </div>
 
         <div class="export-warning">
-          <strong>CRITICAL:</strong> Keep this tab active and visible during export. Resizing the window or changing tabs will disrupt the recording.
+          <strong>NOTE:</strong> Export renders frames offline — your screen may appear frozen during rendering. The final file will play back perfectly at the selected FPS.
         </div>
 
         <div class="export-actions">
@@ -194,44 +210,235 @@ export class ExportModal {
     }
   }
 
+  // ─── Check if WebCodecs (and thus Mediabunny's CanvasSource) is available ───
+  private supportsWebCodecs(): boolean {
+    return typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined';
+  }
+
+  // ─── Main entry point: pick the best export pipeline ───
   private async startRecordingFlow(): Promise<void> {
     if (this.isRecording) return;
 
+    if (this.supportsWebCodecs()) {
+      await this.startOfflineExport();
+    } else {
+      await this.startLegacyRecording();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PRIMARY PATH: Offline frame-by-frame rendering via Mediabunny + WebCodecs
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  private async startOfflineExport(): Promise<void> {
+    try {
+      this.lockUI();
+      this.progressText.textContent = 'PREPARING EXPORT...';
+      this.progressBar.style.width = '0%';
+
+      // Close settings panel if open
+      this.closeSettingsPanel();
+
+      // Lock resolution if specified
+      if (this.exportWidth > 0 && this.exportHeight > 0 && this.onResolutionLock) {
+        this.onResolutionLock(this.exportWidth, this.exportHeight);
+      }
+
+      // Disable regular UI controls
+      if (this.onRecordingStart) this.onRecordingStart();
+      this.disableExternalControls(true);
+
+      // Pause live audio playback
+      this.audio.pause();
+
+      // 1. Decode audio into AudioBuffer
+      this.progressText.textContent = 'DECODING AUDIO...';
+      await this.yieldToUI();
+
+      const audioFile = this.getAudioFile();
+      if (!audioFile) {
+        throw new Error('No audio file available for export.');
+      }
+
+      const arrayBuffer = await audioFile.arrayBuffer();
+      const tempCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+      await tempCtx.close();
+
+      if (!this.isRecording) return; // Cancelled during decode
+
+      // 2. Compute frame metrics
+      const duration = audioBuffer.duration;
+      const totalFrames = Math.ceil(duration * this.fps);
+      const frameDuration = 1 / this.fps;
+
+      // 3. Import Mediabunny (tree-shaken dynamic import)
+      this.progressText.textContent = 'INITIALIZING ENCODER...';
+      await this.yieldToUI();
+
+      const {
+        Output,
+        Mp4OutputFormat,
+        BufferTarget,
+        CanvasSource,
+        AudioBufferSource,
+        QUALITY_HIGH,
+        canEncodeVideo,
+        canEncodeAudio,
+      } = await import('mediabunny');
+
+      // 4. Pick the best available video codec for MP4
+      const videoCodecCandidates = ['avc', 'hevc', 'vp9'] as const;
+      let videoCodec: 'avc' | 'hevc' | 'vp9' | null = null;
+      for (const candidate of videoCodecCandidates) {
+        if (await canEncodeVideo(candidate)) {
+          videoCodec = candidate;
+          break;
+        }
+      }
+      if (!videoCodec) {
+        throw new Error('No supported video encoder found. Try Chrome or Edge.');
+      }
+
+      // 5. Pick the best available audio codec for MP4
+      const audioCodecCandidates = ['aac', 'opus'] as const;
+      let audioCodec: 'aac' | 'opus' | null = null;
+      for (const candidate of audioCodecCandidates) {
+        if (await canEncodeAudio(candidate)) {
+          audioCodec = candidate;
+          break;
+        }
+      }
+      if (!audioCodec) {
+        throw new Error('No supported audio encoder found. Try Chrome or Edge.');
+      }
+
+      // 6. Create Mediabunny Output
+      const output = new Output({
+        format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+        target: new BufferTarget(),
+      });
+
+      const videoSource = new CanvasSource(this.canvas, {
+        codec: videoCodec,
+        bitrate: QUALITY_HIGH,
+        keyFrameInterval: 2,
+      });
+      output.addVideoTrack(videoSource, {
+        frameRate: this.fps,
+      });
+
+      const audioSource = new AudioBufferSource({
+        codec: audioCodec,
+        bitrate: 128_000,
+      });
+      output.addAudioTrack(audioSource);
+
+      await output.start();
+
+      if (!this.isRecording) {
+        await output.finalize();
+        return;
+      }
+
+      // 7. Stop the live render loop — we own the canvas now
+      this.stopRenderLoop();
+
+      // 8. Render all video frames offline
+      this.progressText.textContent = `RENDERING: 0% (0/${totalFrames} frames)`;
+      await this.yieldToUI();
+
+      for (let i = 0; i < totalFrames; i++) {
+        if (!this.isRecording) break; // Cancellation
+
+        const time = i * frameDuration;
+        this.renderFrameAtTime(time);
+
+        // Add the rendered frame to the video source
+        const keyFrame = (i % (this.fps * 2) === 0); // Key frame every ~2 seconds
+        await videoSource.add(time, frameDuration, { keyFrame });
+
+        // Update progress every 10 frames to avoid UI thrashing
+        if (i % 10 === 0 || i === totalFrames - 1) {
+          const pct = ((i + 1) / totalFrames * 100);
+          this.progressBar.style.width = `${pct.toFixed(1)}%`;
+          this.progressText.textContent = `RENDERING: ${pct.toFixed(0)}% (${i + 1}/${totalFrames} frames)`;
+          await this.yieldToUI();
+        }
+      }
+
+      if (!this.isRecording) {
+        // Cancelled during rendering
+        this.resumeRenderLoop();
+        await output.finalize();
+        this.resetUIAfterRecording();
+        return;
+      }
+
+      // 9. Encode audio
+      this.progressText.textContent = 'ENCODING AUDIO...';
+      this.progressBar.style.width = '95%';
+      await this.yieldToUI();
+
+      await audioSource.add(audioBuffer);
+
+      // 10. Finalize
+      this.progressText.textContent = 'FINALIZING MP4...';
+      this.progressBar.style.width = '98%';
+      await this.yieldToUI();
+
+      await output.finalize();
+
+      // 11. Download
+      const { buffer } = output.target as InstanceType<typeof BufferTarget>;
+      if (!buffer) {
+        throw new Error('Export produced no output data.');
+      }
+      const blob = new Blob([buffer], { type: 'video/mp4' });
+      this.downloadBlob(blob, 'mp4');
+
+      // 12. Resume live rendering
+      this.resumeRenderLoop();
+      this.statusPanel.showMessage('Video export completed successfully!', 'success');
+      this.resetUIAfterRecording();
+
+    } catch (err: any) {
+      console.error('Offline export failed:', err);
+      this.resumeRenderLoop();
+
+      if (this.isRecording) {
+        this.statusPanel.showMessage(`Export failed: ${err.message}`, 'error');
+      }
+      this.resetUIAfterRecording();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FALLBACK PATH: Real-time MediaRecorder (for Firefox/Safari)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  private async startLegacyRecording(): Promise<void> {
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
       await this.audioCtx.resume();
     }
 
     try {
-      this.isRecording = true;
-      this.btnStart.disabled = true;
-      this.muteCheckbox.disabled = true;
-      this.btnFps30.disabled = true;
-      this.btnFps60.disabled = true;
-      this.btnResAuto.disabled = true;
-      this.btnRes720p.disabled = true;
-      this.btnRes1080p.disabled = true;
-      this.btnCancel.textContent = 'CANCEL';
-      
+      this.lockUI();
       this.progressText.textContent = 'PREPARING AUDIO ROUTING...';
       this.progressBar.style.width = '0%';
 
-      // 1. Setup Audio
+      // Setup Audio
       this.setupAudioRouting();
 
-      // 1.5 Lock resolution if specified
+      // Lock resolution if specified
       if (this.exportWidth > 0 && this.exportHeight > 0 && this.onResolutionLock) {
         this.onResolutionLock(this.exportWidth, this.exportHeight);
       }
 
       // Close settings panel if open
-      const settingsPanel = document.getElementById('settings-panel');
-      const settingsBtn = document.getElementById('btn-settings');
-      if (settingsPanel && settingsPanel.classList.contains('visible')) {
-        settingsPanel.classList.remove('visible');
-        if (settingsBtn) settingsBtn.classList.remove('panel-active');
-      }
+      this.closeSettingsPanel();
 
-      // 2. Prepare streams
+      // Prepare streams
       const videoStream = this.canvas.captureStream(this.fps);
       const audioStream = this.audioDestNode!.stream;
 
@@ -239,7 +446,7 @@ export class ExportModal {
       videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
       audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
 
-      // 3. Supported MIME formats check
+      // Supported MIME formats check
       const mimeTypes = [
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
@@ -258,7 +465,7 @@ export class ExportModal {
         throw new Error('No supported video recording formats found in this browser.');
       }
 
-      // 4. Disable regular UI controls
+      // Disable regular UI controls
       if (this.onRecordingStart) this.onRecordingStart();
       this.disableExternalControls(true);
 
@@ -267,7 +474,7 @@ export class ExportModal {
         this.audioSourceNode?.disconnect(this.audioCtx!.destination);
       }
 
-      // 5. Seek to beginning and wait for it
+      // Seek to beginning and wait for it
       this.audio.pause();
       this.audio.currentTime = 0;
 
@@ -280,7 +487,7 @@ export class ExportModal {
         setTimeout(resolve, 250);
       });
 
-      // 6. Setup MediaRecorder
+      // Setup MediaRecorder
       this.recordedChunks = [];
       const options = {
         mimeType: selectedMimeType,
@@ -297,17 +504,17 @@ export class ExportModal {
       };
 
       this.mediaRecorder.onstop = () => {
-        this.saveRecording(selectedMimeType);
+        this.saveLegacyRecording(selectedMimeType);
         this.resetUIAfterRecording();
       };
 
-      // 7. Fire recording
+      // Fire recording
       this.mediaRecorder.start(1000);
       
       this.audio.addEventListener('timeupdate', this.handleTimeUpdate);
       this.audio.addEventListener('ended', this.handleAudioEnded);
 
-      this.progressText.textContent = 'RECORDING: 0%';
+      this.progressText.textContent = 'RECORDING (LIVE): 0%';
       await this.audio.play();
 
     } catch (err: any) {
@@ -333,18 +540,18 @@ export class ExportModal {
     const duration = this.audio.duration || 1;
     const percentage = Math.min(100, (current / duration) * 100);
     this.progressBar.style.width = `${percentage.toFixed(1)}%`;
-    this.progressText.textContent = `RECORDING: ${percentage.toFixed(0)}% (${this.formatProgressTime(current)} / ${this.formatProgressTime(duration)})`;
+    this.progressText.textContent = `RECORDING (LIVE): ${percentage.toFixed(0)}% (${this.formatProgressTime(current)} / ${this.formatProgressTime(duration)})`;
     
     if (current >= duration) {
-      this.stopRecording();
+      this.stopLegacyRecording();
     }
   };
 
   private handleAudioEnded = (): void => {
-    this.stopRecording();
+    this.stopLegacyRecording();
   };
 
-  private stopRecording(): void {
+  private stopLegacyRecording(): void {
     if (!this.isRecording) return;
     
     this.audio.removeEventListener('timeupdate', this.handleTimeUpdate);
@@ -360,11 +567,16 @@ export class ExportModal {
     }
   }
 
+  // ─── Shared utilities ───
+
   private cancelOrCloseFlow(): void {
     if (this.isRecording) {
+      // Signal cancellation — the offline loop checks this.isRecording each iteration
+      this.isRecording = false;
+
+      // Legacy path: also clean up MediaRecorder
       this.audio.removeEventListener('timeupdate', this.handleTimeUpdate);
       this.audio.removeEventListener('ended', this.handleAudioEnded);
-      
       this.audio.pause();
       
       if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
@@ -379,7 +591,7 @@ export class ExportModal {
     }
   }
 
-  private saveRecording(mimeType: string): void {
+  private saveLegacyRecording(mimeType: string): void {
     if (this.recordedChunks.length === 0) {
       this.statusPanel.showMessage('No video segments captured.', 'error');
       return;
@@ -387,30 +599,43 @@ export class ExportModal {
 
     try {
       const blob = new Blob(this.recordedChunks, { type: mimeType });
-      const url = URL.createObjectURL(blob);
-      
       let extension = 'webm';
       if (mimeType.includes('mp4')) {
         extension = 'mp4';
       }
-
-      const trackName = this.getTrackName().replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const filename = `${trackName || 'lyrics-video'}_export.${extension}`;
-
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-      }, 5000);
-
+      this.downloadBlob(blob, extension);
       this.statusPanel.showMessage('Video export completed successfully!', 'success');
     } catch (err: any) {
       console.error(err);
       this.statusPanel.showMessage(`Failed to save recording: ${err.message}`, 'error');
     }
+  }
+
+  private downloadBlob(blob: Blob, extension: string): void {
+    const url = URL.createObjectURL(blob);
+    const trackName = this.getTrackName().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const filename = `${trackName || 'lyrics-video'}_export.${extension}`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 5000);
+  }
+
+  private lockUI(): void {
+    this.isRecording = true;
+    this.btnStart.disabled = true;
+    this.muteCheckbox.disabled = true;
+    this.btnFps30.disabled = true;
+    this.btnFps60.disabled = true;
+    this.btnResAuto.disabled = true;
+    this.btnRes720p.disabled = true;
+    this.btnRes1080p.disabled = true;
+    this.btnCancel.textContent = 'CANCEL';
   }
 
   private resetUIAfterRecording(): void {
@@ -453,6 +678,20 @@ export class ExportModal {
     if (dropZone) {
       dropZone.style.pointerEvents = disable ? 'none' : 'auto';
     }
+  }
+
+  private closeSettingsPanel(): void {
+    const settingsPanel = document.getElementById('settings-panel');
+    const settingsBtn = document.getElementById('btn-settings');
+    if (settingsPanel && settingsPanel.classList.contains('visible')) {
+      settingsPanel.classList.remove('visible');
+      if (settingsBtn) settingsBtn.classList.remove('panel-active');
+    }
+  }
+
+  /** Yield to the browser event loop so the UI (progress bar, text) can repaint. */
+  private yieldToUI(): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 0));
   }
 
   private formatProgressTime(seconds: number): string {

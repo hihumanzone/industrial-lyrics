@@ -232,6 +232,24 @@ class App {
       getTrackName: () => {
         return this.currentAudioFile ? this.currentAudioFile.name.replace(/\.[^/.]+$/, "") : "lyrics-video";
       },
+      renderFrameAtTime: (time: number) => {
+        if (this.hasWebGL && this.sceneMachine) {
+          this.sceneMachine.renderAtTime(time);
+        }
+      },
+      stopRenderLoop: () => {
+        if (this.hasWebGL && this.sceneMachine) {
+          this.sceneMachine.stopLoop();
+        }
+      },
+      resumeRenderLoop: () => {
+        if (this.hasWebGL && this.sceneMachine) {
+          this.sceneMachine.resumeLoop();
+        }
+      },
+      getAudioFile: () => {
+        return this.currentAudioFile;
+      },
       onResolutionLock: (width, height) => {
         if (this.hasWebGL && this.sceneMachine) {
           this.sceneMachine.lockResolution(width, height);

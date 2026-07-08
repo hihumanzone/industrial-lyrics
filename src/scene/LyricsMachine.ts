@@ -524,6 +524,38 @@ export class LyricsMachine {
     }
   }
 
+  /**
+   * Renders a single frame at a specific time for offline export.
+   * Sets all internal state to match the given timestamp and performs one full render cycle.
+   */
+  public renderAtTime(time: number): void {
+    this.currentAudioTime = time;
+    this.lastAudioTime = time;
+    this.lastSeenAudioTime = time;
+    this.lastSyncTime = performance.now();
+    this.render();
+  }
+
+  /**
+   * Pauses the requestAnimationFrame render loop.
+   * Used during offline export to give exclusive canvas control to the export pipeline.
+   */
+  public stopLoop(): void {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+  }
+
+  /**
+   * Resumes the requestAnimationFrame render loop after it was stopped.
+   */
+  public resumeLoop(): void {
+    if (this.animationFrameId === null) {
+      this.startLoop();
+    }
+  }
+
   public dispose(): void {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);

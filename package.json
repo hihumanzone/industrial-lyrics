@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "mediabunny": "^1.50.7",
     "three": "^0.185.1"
   },
   "devDependencies": {
