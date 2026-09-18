@@ -9,7 +9,6 @@ export class CameraRig {
   
   private currentLookAt = new THREE.Vector3(0, 0, 0);
   
-  private isReducedMotion = false;
   private isLowPerformance = false;
 
   constructor(camera: THREE.PerspectiveCamera) {
@@ -34,13 +33,13 @@ export class CameraRig {
    * Updates camera position and rotation towards targets
    */
   public update(time: number): void {
-    const lerpSpeed = this.isReducedMotion ? 0.2 : 0.04;
+    const lerpSpeed = 0.04;
     
     // Smoothly interpolate position
     this.camera.position.lerp(this.targetPosition, lerpSpeed);
     
-    // Add subtle ambient floating motion if motion is allowed
-    if (!this.isReducedMotion && !this.isLowPerformance) {
+    // Add subtle ambient floating motion
+    if (!this.isLowPerformance) {
       const swayX = Math.sin(time * 0.5) * 0.15;
       const swayY = Math.cos(time * 0.7) * 0.1;
       const swayZ = Math.sin(time * 0.3) * 0.05;
@@ -58,15 +57,6 @@ export class CameraRig {
   /**
    * Preferences sync
    */
-  public setReducedMotion(enabled: boolean): void {
-    this.isReducedMotion = enabled;
-    if (enabled) {
-      // Instantly snap close to current targets to stop motion sickness
-      this.camera.position.copy(this.targetPosition);
-      this.currentLookAt.copy(this.targetLookAt);
-    }
-  }
-
   public setLowPerformance(enabled: boolean): void {
     this.isLowPerformance = enabled;
   }

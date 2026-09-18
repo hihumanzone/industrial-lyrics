@@ -49,8 +49,7 @@ class App {
     // 5. Initialize HUD controls and Dropzone callbacks
     this.controls = new AudioControls({
       onPlayPause: (play) => this.handlePlayPause(play),
-      onSeek: (time) => this.handleSeek(time),
-      onReducedMotionToggle: (enabled) => this.handleReducedMotionToggle(enabled)
+      onSeek: (time) => this.handleSeek(time)
     });
 
     this.dropZone = new FileDropZone({
@@ -206,12 +205,6 @@ class App {
   }
 
   // Visual Preference Bridges
-  private handleReducedMotionToggle(enabled: boolean): void {
-    if (this.hasWebGL && this.sceneMachine) {
-      this.sceneMachine.setReducedMotion(enabled);
-    }
-  }
-
   private handleFallbackViewToggle(enabled: boolean): void {
     if (this.hasWebGL && this.sceneMachine) {
       this.sceneMachine.setFallbackView(enabled);

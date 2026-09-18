@@ -31,7 +31,6 @@ export class LyricsMachine {
   
   // Animation state
   private activeIndex = -1;
-  private isReducedMotion = false;
   private isLowPerformance = false;
   private isFallbackView = false;
   private isLockedResolution = false;
@@ -213,8 +212,7 @@ export class LyricsMachine {
       fallbackEl.textContent = activeLineText;
     }
 
-    // Adjust ease factor if reduced-motion is enabled
-    const lerpSpeed = this.isReducedMotion ? 0.35 : 0.08;
+    const lerpSpeed = 0.08;
 
     // 2. Animate panels and determine light color
     this.glowSources.length = 0; // Clear reuse array
@@ -425,11 +423,6 @@ export class LyricsMachine {
   /**
    * Preferences sync toggles
    */
-  public setReducedMotion(enabled: boolean): void {
-    this.isReducedMotion = enabled;
-    this.cameraRig.setReducedMotion(enabled);
-  }
-
   public setLowPerformance(enabled: boolean): void {
     this.isLowPerformance = enabled;
     this.atmosphere.setLowPerformance(enabled);

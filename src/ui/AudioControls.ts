@@ -1,7 +1,6 @@
 interface AudioControlsCallbacks {
   onPlayPause: (isPlaying: boolean) => void;
   onSeek: (time: number) => void;
-  onReducedMotionToggle: (enabled: boolean) => void;
 }
 
 export class AudioControls {
@@ -75,14 +74,6 @@ export class AudioControls {
       this.callbacks.onSeek(targetTime);
       this.isScrubbing = false;
     });
-
-    // Check prefers-reduced-motion media query and sync
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      // Triggers delayed loop to guarantee listeners ready
-      setTimeout(() => {
-        this.callbacks.onReducedMotionToggle(true);
-      }, 100);
-    }
 
     // Mouse proximity reveal logic for controls-panel (visible within 150px of the bottom edge)
     const handleProximity = (clientY: number) => {
