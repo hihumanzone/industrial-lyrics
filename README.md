@@ -8,13 +8,19 @@ A cinematic 3D synchronized lyrics viewer powered by Three.js. Load audio and `.
 
 ![3D lyrics scene with synchronized lyric panels](./screenshots/lyrics-scene.png)
 
+Each lyric line is rendered on a textured 3D panel that lights up in sync with the audio.
+
 ### Visual Configurator
 
 ![Visual configurator panel with background image, darkness and blur controls](./screenshots/visual-configurator.png)
 
+The Visual Configurator lets you set a custom background image and fine-tune its darkness and blur.
+
 ### Export Lyrics Video
 
 ![Export lyrics video dialog with quality, resolution and recording status options](./screenshots/export-dialog.png)
+
+The export dialog renders the synchronized 3D scene and audio directly to a video file at 30 or 60 FPS, up to 1080p.
 
 ## Features
 
