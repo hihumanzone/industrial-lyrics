@@ -10,6 +10,7 @@ export class FileDropZone {
   private dropZoneElement: HTMLElement;
   private inputAudio: HTMLInputElement;
   private inputLyrics: HTMLInputElement;
+  private btnLoadSample: HTMLButtonElement;
   private statusPanel: StatusPanel;
   private callbacks: FileDropZoneCallbacks;
 
@@ -20,6 +21,7 @@ export class FileDropZone {
     this.dropZoneElement = document.getElementById('drop-zone') as HTMLElement;
     this.inputAudio = document.getElementById('input-audio') as HTMLInputElement;
     this.inputLyrics = document.getElementById('input-lyrics') as HTMLInputElement;
+    this.btnLoadSample = document.getElementById('btn-load-sample') as HTMLButtonElement;
 
     this.initEventListeners();
   }
@@ -69,6 +71,10 @@ export class FileDropZone {
         this.handleFiles(this.inputLyrics.files);
       }
     });
+
+    this.btnLoadSample.addEventListener('click', () => {
+      this.loadSample();
+    });
   }
 
   /**
@@ -106,6 +112,49 @@ export class FileDropZone {
 
     if (!audioFile && !lrcFile && files.length > 0) {
       this.statusPanel.showMessage('Unsupported file type. Load audio tracks or .lrc lyrics.', 'error');
+    }
+  }
+
+  /**
+   * Loads the bundled sample data (audio + LRC) from the server.
+   */
+  private async loadSample(): Promise<void> {
+    const sampleDir = '/sample';
+    const audioName = 'House of Gold • LITTLE PICKLE TOWN.mp3';
+    const lrcName = 'House of Gold • LITTLE PICKLE TOWN.lrc';
+
+    this.btnLoadSample.disabled = true;
+    this.btnLoadSample.textContent = 'LOADING...';
+
+    try {
+      const [audioResponse, lrcResponse] = await Promise.all([
+        fetch(`${sampleDir}/${encodeURIComponent(audioName)}`),
+        fetch(`${sampleDir}/${encodeURIComponent(lrcName)}`)
+      ]);
+
+      if (!audioResponse.ok) {
+        throw new Error(`Audio fetch failed (${audioResponse.status})`);
+      }
+      if (!lrcResponse.ok) {
+        throw new Error(`LRC fetch failed (${lrcResponse.status})`);
+      }
+
+      const audioBlob = await audioResponse.blob();
+      const lrcText = await lrcResponse.text();
+
+      const audioFile = new File([audioBlob], audioName, { type: audioBlob.type || 'audio/mpeg' });
+
+      this.statusPanel.showMessage('Sample audio loaded', 'success');
+      this.callbacks.onAudioLoaded(audioFile);
+
+      this.statusPanel.showMessage('Sample lyrics loaded', 'success');
+      this.callbacks.onLyricsLoaded(lrcName, lrcText);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      this.statusPanel.showMessage(`Failed to load sample: ${errMsg}`, 'error');
+    } finally {
+      this.btnLoadSample.disabled = false;
+      this.btnLoadSample.textContent = 'LOAD SAMPLE';
     }
   }
 
